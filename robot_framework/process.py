@@ -38,11 +38,33 @@ from datetime import datetime
 import requests
 
 from robot_framework import reset
+from robot_framework.exceptions import CaseDeleted
 from oomtm import nova as oomtm_nova
 
 
 # ----- Document title sanitization (preserved from legacy robot) -------------
 _TITLE_BAD_CHARS = re.compile(r'[~#%&*{}\:\\<>?/+|\"\'\t\[\]`^@=!$();\€£¥₹]')
+
+
+# ----- Deleted in KontAKT ----------------------------------------------------
+
+
+def _check_gone(resp) -> None:
+    """Stop cleanly if what this queue element is about was deleted in KontAKT.
+
+    KontAKT answers HTTP 410 with ``{"deleted": "case"|"reference"|"document"}``
+    when the caseworker deleted the KontAKT case, the sag/mappe or the document
+    while this element waited in the queue. Not an error and not retryable, so
+    the queue framework marks the element done and takes the next one.
+    """
+    if resp is None or resp.status_code != 410:
+        return
+    try:
+        body = resp.json() or {}
+    except ValueError:
+        body = {}
+    if body.get("deleted"):
+        raise CaseDeleted(body.get("note") or f"{body['deleted']} deleted in KontAKT")
 
 
 def process(
@@ -227,12 +249,14 @@ def _fetch_nova(
 
 
 def _kontakt_post(client, path: str, payload: dict, *, timeout: int = 60) -> requests.Response:
-    return requests.post(
+    resp = requests.post(
         f"{client.kontakt_base}{path}",
         headers={"X-API-Key": client.kontakt_key, "Content-Type": "application/json"},
         json=payload,
         timeout=timeout,
     )
+    _check_gone(resp)
+    return resp
 
 
 def _set_ref_status(orchestrator_connection, client, case_id: int, ref_id: int | None, status: str, message: str = "") -> None:
@@ -245,5 +269,7 @@ def _set_ref_status(orchestrator_connection, client, case_id: int, ref_id: int |
             {"status": status, "message": message},
             timeout=10,
         )
+    except CaseDeleted:
+        raise           # the sag is gone — don't bury it in the broad except
     except Exception as exc:  # pylint: disable=broad-except
         orchestrator_connection.log_info(f"Could not update ref status to {status!r}: {exc!r}")
