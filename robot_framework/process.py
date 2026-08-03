@@ -90,20 +90,25 @@ def process(
     _set_ref_status(orchestrator_connection, client, kontakt_case_id, kontakt_ref_id, "fetching")
 
     try:
-        sags_title, documents, warnings = _fetch_nova(orchestrator_connection, client, source_case_id)
+        sags_title, sags_dato, documents, warnings = _fetch_nova(
+            orchestrator_connection, client, source_case_id)
     except Exception as exc:
         orchestrator_connection.log_info(f"Nova document fetch failed: {exc!r}")
         _set_ref_status(orchestrator_connection, client, kontakt_case_id, kontakt_ref_id, "error", str(exc))
         raise
 
     orchestrator_connection.log_info(
-        f"Fetched {len(documents)} documents from Nova ({len(warnings)} warnings) — posting to KontAKT."
+        f"Fetched {len(documents)} documents from Nova ({len(warnings)} warnings), "
+        f"sagsdato={sags_dato} — posting to KontAKT."
     )
 
     import_payload = {
         "source_system": "nova",
         "source_case_id": source_case_id,
         "source_case_title": sags_title,
+        # The sag's own date in Nova (caseDate) — KontAKT shows it in the
+        # applicant's sagsoversigt, the way the old AktBob robot did.
+        "source_case_date": sags_dato,
         "documents": documents,
         "warnings": warnings,
     }
@@ -156,25 +161,45 @@ def _coerce_doc_date(raw) -> str | None:
     return None
 
 
+def _coerce_case_date(raw) -> str | None:
+    """The sag's own date as ISO ``YYYY-MM-DD``, or None.
+
+    GO gives ``ows_Modtaget`` as "YYYY-MM-DD HH:MM:SS" and Nova gives an ISO
+    timestamp, so drop anything after the day before parsing.
+    """
+    if not raw:
+        return None
+    head = str(raw).strip().replace("T", " ").split(" ")[0]
+    return _coerce_doc_date(head)
+
+
 # ----- Nova document fetch ---------------------------------------------------
 
 
 def _fetch_nova(
     orchestrator_connection: OrchestratorConnection, client, sags_id: str
-) -> tuple[str, list[dict], list[str]]:
-    """Return (case_title, documents, warnings) for a Nova case."""
+) -> tuple[str, str | None, list[dict], list[str]]:
+    """Return (case_title, case_date, documents, warnings) for a Nova case."""
     nova_url = client.nova_url
     token = client.token
 
     # --- Case metadata ---
+    # caseDate isn't in the lib's default output selection, so ask for it
+    # explicitly — it's the sag's date in the applicant's sagsoversigt.
     case = oomtm_nova.get_case_metadata(
         token=token,
         base_url=nova_url,
         case_number=sags_id,
+        case_get_output={"caseAttributes": {"title": True,
+                                           "userFriendlyCaseNumber": True,
+                                           "numberOfDocuments": True,
+                                           "caseDate": True}},
     )
-    sags_title = case.get("caseAttributes", {}).get("title") or sags_id
+    attrs = case.get("caseAttributes", {}) or {}
+    sags_title = attrs.get("title") or sags_id
     sags_title = _TITLE_BAD_CHARS.sub("", str(sags_title))
     sags_title = " ".join(sags_title.split())
+    sags_dato = _coerce_case_date(attrs.get("caseDate"))
 
     # --- Document list (main + sub-docs grouped) ---
     groups = oomtm_nova.get_document_list(
@@ -242,7 +267,7 @@ def _fetch_nova(
     if has_missing_date:
         warnings.append("Et eller flere dokumenter mangler dato i Nova.")
 
-    return sags_title, documents, warnings
+    return sags_title, sags_dato, documents, warnings
 
 
 # ----- KontAKT API client ----------------------------------------------------
