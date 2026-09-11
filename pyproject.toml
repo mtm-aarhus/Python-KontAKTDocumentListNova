@@ -15,11 +15,22 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
 ]
+# HVER VERSION ER LAAST, OG DET ER EN SIKKERHEDSREGEL - IKKE PEDANTERI.
+# Robotten installerer sine afhaengigheder ved HVER koersel. Med ">=" henter den
+# den nyeste udgave paa PyPI i samme oejeblik, den koerer - saa en kapret eller
+# kompromitteret pakke rammer robotmaskinen uden at nogen har besluttet noget.
+# Et "==" betyder, at en ny version er en beslutning, nogen traeffer.
+#
+# cryptography staar IKKE her: den kommer med OpenOrchestrator, som pinner den
+# selv (==45.0.*). To steder at bestemme den version er ét for mange.
+#
+# oomtm peger paa en COMMIT og ikke paa "main". Vi vedligeholder selv oomtm, men
+# en gren flytter sig - og saa er det ikke laengere laast. En commit er.
 dependencies = [
     "OpenOrchestrator == 3.*",
-    "oomtm @ git+https://github.com/mtm-aarhus/oomtm.git@main",
-    "requests >= 2.31",
-    "Pillow == 10.*",
+    "oomtm @ git+https://github.com/mtm-aarhus/oomtm.git@e4cc2d7c4f5090b78688ebab0a0eed624ddd1df1",
+    "requests == 2.34.2",
+    "Pillow == 10.4.0",
 ]
 
 [project.optional-dependencies]
